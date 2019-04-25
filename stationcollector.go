@@ -2,6 +2,7 @@ package unifiexporter
 
 import (
 	"log"
+	"time"
 
 	"github.com/mdlayher/unifi"
 	"github.com/prometheus/client_golang/prometheus"
@@ -11,6 +12,8 @@ import (
 // UniFi stations (clients).
 type StationCollector struct {
 	Stations *prometheus.Desc
+
+	UptimeSecondsTotal *prometheus.Desc
 
 	ReceivedBytesTotal    *prometheus.Desc
 	TransmittedBytesTotal *prometheus.Desc
@@ -53,6 +56,13 @@ func NewStationCollector(c *unifi.Client, sites []*unifi.Site) *StationCollector
 			prometheus.BuildFQName(namespace, "", subsystem),
 			"Total number of stations (clients)",
 			labelsSiteOnly,
+			nil,
+		),
+
+		UptimeSecondsTotal: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, subsystem, "uptime_seconds_total"),
+			"Station uptime in seconds",
+			labelsStation,
 			nil,
 		),
 
@@ -119,6 +129,7 @@ func (c *StationCollector) collect(ch chan<- prometheus.Metric) (*prometheus.Des
 			s.Description,
 		)
 
+		c.collectStationUptime(ch, s.Description, stations)
 		c.collectStationBytes(ch, s.Description, stations)
 		c.collectStationSignal(ch, s.Description, stations)
 	}
@@ -143,6 +154,27 @@ func connType(s *unifi.Station) string {
 	}
 
 	return "wireless"
+}
+
+// collectDeviceUptime collects device uptime for UniFi devices.
+func (c *StationCollector) collectStationUptime(ch chan<- prometheus.Metric, siteLabel string, stations []*unifi.Station) {
+	for _, s := range stations {
+		labels := []string{
+			siteLabel,
+			s.ID,
+			s.APMAC.String(),
+			s.MAC.String(),
+			hostName(s),
+			connType(s),
+		}
+
+		ch <- prometheus.MustNewConstMetric(
+			c.UptimeSecondsTotal,
+			prometheus.CounterValue,
+			float64(s.Uptime/time.Second),
+			labels...,
+		)
+	}
 }
 
 // collectStationBytes collects receive and transmit byte counts for UniFi stations.
@@ -221,6 +253,8 @@ func (c *StationCollector) collectStationSignal(ch chan<- prometheus.Metric, sit
 func (c *StationCollector) Describe(ch chan<- *prometheus.Desc) {
 	ds := []*prometheus.Desc{
 		c.Stations,
+
+		c.UptimeSecondsTotal,
 
 		c.ReceivedBytesTotal,
 		c.TransmittedBytesTotal,
